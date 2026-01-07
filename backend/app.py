@@ -8,6 +8,8 @@ import torch.nn as nn
 from torchvision import models, transforms
 import numpy as np
 import base64
+import os
+import requests
 
 # =========================
 # MODEL DEFINITION (RegNetMTL)
@@ -15,10 +17,12 @@ import base64
 class RegNetMTL(nn.Module):
     def __init__(self):
         super().__init__()
-        regnet = models.regnet_y_400mf(weights=models.RegNet_Y_400MF_Weights.DEFAULT)
+        regnet = models.regnet_y_400mf(
+            weights=models.RegNet_Y_400MF_Weights.DEFAULT
+        )
 
         self.stem = regnet.stem
-        self.trunk = regnet.trunk_output   # (B,440,7,7)
+        self.trunk = regnet.trunk_output  # (B, 440, 7, 7)
 
         self.cls_pool = nn.AdaptiveAvgPool2d(1)
         self.cls_head = nn.Linear(440, 1)
@@ -33,17 +37,28 @@ class RegNetMTL(nn.Module):
                 nn.ReLU(inplace=True),
             )
 
-        self.up1 = nn.Sequential(nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-                                 block(440, 256))
-        self.up2 = nn.Sequential(nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-                                 block(256, 128))
-        self.up3 = nn.Sequential(nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-                                 block(128, 64))
-        self.up4 = nn.Sequential(nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-                                 block(64, 32))
-        self.up5 = nn.Sequential(nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-                                 nn.Conv2d(32, 16, 3, padding=1),
-                                 nn.ReLU(inplace=True))
+        self.up1 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+            block(440, 256),
+        )
+        self.up2 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+            block(256, 128),
+        )
+        self.up3 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+            block(128, 64),
+        )
+        self.up4 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+            block(64, 32),
+        )
+        self.up5 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+            nn.Conv2d(32, 16, 3, padding=1),
+            nn.ReLU(inplace=True),
+        )
+
         self.seg_head = nn.Conv2d(16, 1, 1)
 
     def forward(self, x):
@@ -66,7 +81,7 @@ class RegNetMTL(nn.Module):
 # =========================
 # FASTAPI SETUP
 # =========================
-app = FastAPI()
+app = FastAPI(title="SkinGuard AI")
 
 app.add_middleware(
     CORSMiddleware,
@@ -80,48 +95,80 @@ app.add_middleware(
 # GLOBALS
 # =========================
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-weight_path = r"D:\skin cancer\improving_pre-process\mtl_runs\best_model.pth"
 
-model = None  # Loaded at startup
+MODEL_DIR = "backend/model"
+MODEL_PATH = os.path.join(MODEL_DIR, "best_model.pth")
+
+MODEL_URL = (
+    "https://huggingface.co/ashmikotian7/Skin_Cancer/resolve/main/best_model.pth"
+)
+
+model = None
+
 
 # =========================
-# LOAD MODEL ON STARTUP (FIX)
+# DOWNLOAD MODEL (HF)
+# =========================
+def download_model():
+    os.makedirs(MODEL_DIR, exist_ok=True)
+
+    if os.path.exists(MODEL_PATH):
+        print("✅ Model already exists")
+        return
+
+    print("⬇️ Downloading model from Hugging Face...")
+    response = requests.get(MODEL_URL, stream=True)
+    response.raise_for_status()
+
+    with open(MODEL_PATH, "wb") as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
+
+    print("✅ Model downloaded successfully")
+
+
+# =========================
+# LOAD MODEL ON STARTUP
 # =========================
 @app.on_event("startup")
 def load_model():
     global model
-    print("🔄 Loading model...")
+    print("🔄 Starting model initialization...")
+
+    download_model()
 
     model = RegNetMTL().to(device)
 
-    checkpoint = torch.load(weight_path, map_location=device)
-    if "model_state" in checkpoint:
+    checkpoint = torch.load(MODEL_PATH, map_location=device)
+    if isinstance(checkpoint, dict) and "model_state" in checkpoint:
         model.load_state_dict(checkpoint["model_state"])
     else:
         model.load_state_dict(checkpoint)
 
     model.eval()
-    print("✅ Model loaded successfully")
+    print("🚀 Model loaded and ready")
 
 
 # =========================
 # IMAGE PREPROCESSING
 # =========================
-preprocess = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-])
+preprocess = transforms.Compose(
+    [
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+    ]
+)
 
 
 # =========================
-# FAST COLOR MAP (BLACK BACKGROUND)
+# HEATMAP FUNCTION
 # =========================
 def apply_heatmap(prob_mask):
     h, w = prob_mask.shape
     heatmap = np.zeros((h, w, 3), dtype=np.uint8)
 
     mask_scaled = (prob_mask * 255).astype(np.uint8)
-
     heatmap[..., 0] = mask_scaled
     heatmap[..., 1] = np.clip(mask_scaled - 128, 0, 255)
     heatmap[..., 2] = np.clip(mask_scaled - 192, 0, 255)
@@ -136,32 +183,38 @@ def apply_heatmap(prob_mask):
 async def predict(file: UploadFile = File(...)):
     try:
         if model is None:
-            return JSONResponse({"error": "Model not loaded yet"}, status_code=503)
+            return JSONResponse(
+                {"error": "Model not loaded yet"}, status_code=503
+            )
 
-        # Read image
         image_bytes = await file.read()
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         orig_size = image.size
 
-        # Preprocess
         input_tensor = preprocess(image).unsqueeze(0).to(device)
 
         with torch.no_grad():
             cls_logit, seg_logit = model(input_tensor)
+
             prob = torch.sigmoid(cls_logit).item()
             prediction = "Cancerous" if prob >= 0.5 else "Non-Cancerous"
 
-            # Mask
             mask_prob = torch.sigmoid(seg_logit).squeeze().cpu().numpy()
-            mask_prob_resized = np.array(
-                Image.fromarray(mask_prob).resize(orig_size[::-1], resample=Image.BILINEAR)
+
+            mask_resized = np.array(
+                Image.fromarray(mask_prob).resize(
+                    orig_size[::-1], resample=Image.BILINEAR
+                )
             )
 
-            mask_color = apply_heatmap(mask_prob_resized / mask_prob_resized.max())
+            mask_color = apply_heatmap(
+                mask_resized / (mask_resized.max() + 1e-6)
+            )
 
-            mask_color_img = Image.fromarray(mask_color)
+            mask_img = Image.fromarray(mask_color)
             buffer = io.BytesIO()
-            mask_color_img.save(buffer, format="PNG")
+            mask_img.save(buffer, format="PNG")
+
             mask_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
         return {
@@ -180,4 +233,4 @@ async def predict(file: UploadFile = File(...)):
 # =========================
 @app.get("/")
 def root():
-    return {"message": "SkinGuard AI backend is running!"}
+    return {"message": "SkinGuard AI backend is running 🚀"}
