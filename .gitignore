@@ -1,0 +1,101 @@
+##############################
+# Node / Frontend
+##############################
+
+# dependencies
+frontend/node_modules/
+frontend/.pnpm-store/
+
+# build output
+frontend/dist/
+frontend/build/
+
+# logs
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*
+
+# environment files
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# editor junk
+frontend/.DS_Store
+
+
+##############################
+# Python / Backend
+##############################
+
+# virtual env
+backend/venv/
+backend/.venv/
+
+# compiled python
+backend/__pycache__/
+backend/*.pyc
+backend/*.pyo
+backend/.pytest_cache/
+
+# environment
+backend/.env
+backend/.env.*
+
+# model weights (OPTIONAL)
+backend/model/*.pth
+backend/model/*.pt
+backend/model/*.bin
+
+# logs
+backend/logs/
+backend/*.log
+
+
+##############################
+# OS / IDE Files
+##############################
+
+# mac
+.DS_Store
+
+# windows
+Thumbs.db
+desktop.ini
+
+# vscode
+.vscode/
+.history/
+
+# pycharm
+.idea/
+
+##############################
+# Other
+##############################
+
+# backups
+*.bak
+*.swp
+node_modules
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+venv/
+env/
+backend/venv/
+
+# ML models
+*.pth
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
