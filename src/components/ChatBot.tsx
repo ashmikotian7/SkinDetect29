@@ -363,7 +363,7 @@ const Chatbot: React.FC = () => {
               justifyContent: "center",
             }}
           >
-            {["Early signs", "Prevention", "Skin care tips", "Symptoms", "Treatment options"].map(
+            {["Early signs", "Skin care tips", "Symptoms", "Treatment options"].map(
               (q) => (
                 <button
                   key={q}
