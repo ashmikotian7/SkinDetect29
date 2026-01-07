@@ -216,7 +216,7 @@ const Upload = () => {
       const formData = new FormData();
       formData.append("file", selectedFile);
 
-      const res = await fetch("http://localhost:8000/predict", {
+      const res = await fetch("https://skindetect29.onrender.com/predict", {
         method: "POST",
         body: formData,
       });
